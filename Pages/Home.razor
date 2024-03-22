@@ -1,0 +1,343 @@
+﻿@page "/"
+@using System.Text
+@using System.IO.Compression
+@inject NavigationManager Navigation
+@inject IJSRuntime JsRuntime
+@inject Blazored.LocalStorage.ILocalStorageService localStorage
+
+<PageTitle>Home</PageTitle>
+
+<h1>Home</h1>
+<br />
+<p><b>Status:</b> @status</p>
+@if (ZipFileExists)
+{
+    <p>
+        <button class="btn btn-secondary" @onclick="UnzipFile">Unzip File To Directory</button>&nbsp;&nbsp;
+        <button class="btn btn-secondary" @onclick="DownloadZipFile">Download Zip File</button>&nbsp;&nbsp;
+        <button class="btn btn-danger" @onclick="DeleteZipFile">Delete Zip File</button>
+    </p>
+    <hr />
+}
+<button class="btn btn-info" @onclick="CountFiles">Count Directories And Files</button>
+&nbsp;&nbsp;
+<button class="btn btn-primary" @onclick="CreateFiles">Create Directories And Files</button>
+@if (FilesExist)
+{
+    <hr />
+    <p>
+        <button class="btn btn-dark" @onclick="LoadFile">Load File</button>
+        &nbsp; &nbsp;
+        <button class="btn btn-success" @onclick="ZipTheFiles">Zip Up Files</button>
+        &nbsp; &nbsp;
+        <button class="btn btn-danger" @onclick="ClearFiles">Clear Directories And Files</button>
+        @if (@fileContent != "")
+        {
+            <br />
+            <br />
+            <b>File Content:</b>
+            <br />
+            <br />    <textarea @bind="fileContent" rows="10" cols="75"></textarea>
+            <br />
+            <br />    <button class="btn btn-success" @onclick="UpdateFiles">Update File</button>
+        }
+    </p>
+}
+@code {
+    #nullable disable
+    private IDisposable registration;
+    string status = "";
+    bool FilesExist = false;
+    bool ZipFileExists = false;
+    string BasePath = @"/Temp";
+    int directoryCount = 0;
+    int fileCount = 0;
+    string fileContent = "";
+
+    private DotNetObjectReference<Home> objRef;
+
+    // Run on page load
+    protected override async Task OnInitializedAsync()
+    {
+        // Check if the Zip file exists in local storage
+        ZipFileExists = await localStorage.ContainKeyAsync("ZipFiles.zip");
+
+        objRef = DotNetObjectReference.Create(this);
+        await JsRuntime.InvokeVoidAsync("setupBeforeUnload", objRef);
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            registration =
+                Navigation.RegisterLocationChangingHandler(OnLocationChanging);
+        }
+    }
+
+    private ValueTask OnLocationChanging(LocationChangingContext context)
+    {
+        // Get the base URL 
+        string baseUrl = Navigation.BaseUri;
+
+        // Detect that user is going to counter page
+        if (context.TargetLocation != baseUrl)
+        {
+            status = "User is navigating away from the page - Zip any files";
+
+            // Zip up any files and store in LocalStorage
+            Task.Run(async () => await ZipTheFiles());
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    [JSInvokable]
+    public void HandleBeforeUnload()
+    {
+        status = "User is navigating away from the page - Zip any files";
+
+        // Zip up any files and store in LocalStorage
+        Task.Run(async () => await ZipTheFiles());
+    }
+
+    public void Dispose()
+    {
+        objRef?.Dispose();
+    }
+
+    private async Task CreateFiles()
+    {
+        status = "Creating directories and files...";
+
+        // Call method to create directories and files
+        await CreateDirectoriesAndFiles(BasePath, 2, 10);
+
+        status = "Directories and files created.";
+
+        FilesExist = true;
+    }
+
+    private async Task CountFiles()
+    {
+        directoryCount = 0;
+        fileCount = 0;
+
+        try
+        {
+            status = "Counting directories and files...";
+
+            // Call method to count directories and files
+            await CountItems(BasePath);
+
+            status = $"Directories = {directoryCount} and files = {fileCount}.";
+        }
+        catch (Exception ex)
+        {
+            status = ex.Message;
+            return;
+        }
+    }
+
+    private void ClearFiles()
+    {
+        // If BasePath is not a directory, return
+        if (!Directory.Exists(BasePath))
+        {
+            status = "BasePath is not a directory.";
+            return;
+        }
+
+        // Delete the directory and all files
+        Directory.Delete(BasePath, true);
+
+        FilesExist = false;
+
+        status = "Directories and files cleared.";
+    }
+
+    private void LoadFile()
+    {
+        // Load the file into the textarea
+        string filePath = BasePath + @"/Directory1/File5.txt";
+
+        if (File.Exists(filePath))
+        {
+            // Read the file into a string
+            fileContent = File.ReadAllText(filePath);
+            StateHasChanged();
+        }
+        else
+        {
+            fileContent = "File not found.";
+        }
+    }
+
+    private void UpdateFiles()
+    {
+        string filePath = BasePath + @"/Directory1/File5.txt";
+
+        if (File.Exists(filePath))
+        {
+            // Write the file content to the file
+            File.WriteAllText(filePath, fileContent);
+            status = "File updated.";
+        }
+        else
+        {
+            fileContent = "File not found.";
+        }
+
+        fileContent = "";
+    }
+
+    private async Task ZipTheFiles()
+    {
+        string zipPath = @"/Zip";
+        string zipFilePath = @"/Zip/ZipFiles.zip";
+
+        // If zipFilePath exists, delete it
+        if (File.Exists(zipFilePath))
+        {
+            File.Delete(zipFilePath);
+        }
+
+        // Create the directory if it doesn't exist
+        if (!Directory.Exists(zipPath))
+        {
+            Directory.CreateDirectory(zipPath);
+        }
+
+        // If BasePath is not a directory, return
+        if (!Directory.Exists(BasePath))
+        {
+            status = "Nothing to Zip up.";
+            return;
+        }
+
+        // Create a zip file from the directory
+        ZipFile.CreateFromDirectory(BasePath, zipFilePath);
+
+        status = "Files zipped.";
+        StateHasChanged();
+
+        // Read the Zip file into a byte array
+        status = "Read the Zip file into a byte array";
+        byte[] exportFileBytes = File.ReadAllBytes(zipFilePath);
+        StateHasChanged();
+
+        // Convert byte array to Base64 string
+        status = "Convert byte array to Base64 string";
+        string base64String = Convert.ToBase64String(exportFileBytes);
+        StateHasChanged();
+
+        // Store base64String in the browser's local storage
+        await localStorage.SetItemAsync("ZipFiles.zip", base64String);
+
+        ZipFileExists = true;
+
+        status = "Zip file stored in the browser's local storage";
+    }
+
+    private async Task UnzipFile()
+    {
+        string extractPath = @"/Zip";
+
+        // If the extract directory does not exist, create it
+        if (!Directory.Exists(extractPath))
+        {
+            Directory.CreateDirectory(extractPath);
+        }
+
+        // Get exportFileString from the browser's local storage
+        string exportFileString = await localStorage.GetItemAsync<string>("ZipFiles.zip");
+
+        // Convert the Base64 string to a byte array
+        byte[] exportFileBytes = Convert.FromBase64String(exportFileString);
+
+        // Write the byte array to a file
+        await File.WriteAllBytesAsync($"{extractPath}/ZipFiles.zip", exportFileBytes);
+
+        // Extract the zip file
+        ZipFile.ExtractToDirectory($"{extractPath}/ZipFiles.zip", BasePath);
+
+        status = "Files unzipped.";
+        FilesExist = true;
+    }
+
+    private async Task DownloadZipFile()
+    {
+        // Get exportFileString from the browser's local storage
+        string base64String = await localStorage.GetItemAsync<string>("ZipFiles.zip");
+
+        // Download the zip file
+        await JsRuntime.InvokeVoidAsync("saveAsFile", "ZipFiles.zip", base64String);
+    }
+
+    private void DeleteZipFile()
+    {
+        // Remove the zip file from the browser's local storage
+        localStorage.RemoveItemAsync("ZipFiles.zip");
+        ZipFileExists = false;
+    }
+
+    // Methods
+
+    private async Task CreateDirectoriesAndFiles(string basePath, int dirCount, int filesPerDir)
+    {
+        // If the base path does not exist, create it
+        if (!Directory.Exists(basePath))
+        {
+            Directory.CreateDirectory(basePath);
+        }
+
+        // Create a string of 10,000 characters
+        StringBuilder sb = new StringBuilder();
+        for (int i = 1; i <= 10000; i++)
+        {
+            sb.Append("data" + i + " ");
+        }
+        string data = sb.ToString();
+
+        // Create directories and files
+        for (int dirNum = 1; dirNum <= dirCount; dirNum++)
+        {
+            string dirPath = Path.Combine(basePath, "Directory" + dirNum.ToString());
+            Directory.CreateDirectory(dirPath);
+
+            for (int fileNum = 1; fileNum <= filesPerDir; fileNum++)
+            {
+                string filePath = Path.Combine(dirPath, "File" + fileNum.ToString() + ".txt");
+                await Task.Run(() => File.WriteAllText(filePath, data));
+            }
+        }
+    }
+
+    private async Task CountItems(string path)
+    {
+        // If BasePath is not a directory, return
+        if (!Directory.Exists(BasePath))
+        {
+            status = "BasePath is not a directory.";
+            return;
+        }
+
+        // Count the current directory
+        directoryCount++;
+
+        // Get all files in the current directory and increment the file count
+        fileCount += Directory.GetFiles(path).Length;
+
+        // Get all subdirectories in the current directory
+        string[] subDirectories = Directory.GetDirectories(path);
+
+        // Recursively count the items in all subdirectories
+        foreach (string dir in subDirectories)
+        {
+            await Task.Run(() => CountItems(dir));
+        }
+
+        status = $"Directories = {directoryCount} and files = {fileCount}.";
+        StateHasChanged();
+    }
+}
